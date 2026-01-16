@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v7 (排序優化)</title>
+    <title>超級幸運抽抽樂 - 管理後台 v8 (信箱)</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -55,6 +55,15 @@
         .default-tag { background: #f8f9fa; color: #7f8c8d; border: 1px dashed #ccc; }
         .default-tag strong { color: #95a5a6; }
 
+        /* Mailbox Styles */
+        .mail-item { background: white; padding: 15px; margin-bottom: 10px; border-radius: 8px; border-left: 5px solid #ccc; box-shadow: 0 2px 5px rgba(0,0,0,0.05); transition: 0.3s; }
+        .mail-item.unread { border-left-color: #e74c3c; background: #fff5f5; }
+        .mail-header { display: flex; justify-content: space-between; margin-bottom: 5px; font-size: 0.85rem; color: #7f8c8d; }
+        .mail-content { font-size: 1rem; color: #2c3e50; line-height: 1.5; white-space: pre-wrap; }
+        .mail-actions { margin-top: 10px; display: flex; gap: 10px; justify-content: flex-end; }
+        .btn-read { background: #3498db; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
+        .btn-read.is-read { background: #95a5a6; }
+
         #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 999; display: flex; justify-content: center; align-items: center; color: white; flex-direction: column; }
         .login-box { background: white; padding: 30px; border-radius: 10px; color: #333; width: 300px; text-align: center; }
         .login-input { width: 100%; padding: 10px; margin: 10px 0; box-sizing: border-box; }
@@ -79,6 +88,7 @@
     <div class="menu-item active" onclick="switchPage('dashboard')">📊 總覽儀表板</div>
     <div class="menu-item" onclick="switchPage('users')">👥 使用者管理</div>
     <div class="menu-item" onclick="switchPage('rewards')">🎁 獎品大數據</div>
+    <div class="menu-item" onclick="switchPage('mailbox')">📬 信箱管理 <span id="unreadBadge" style="background:#e74c3c; padding:2px 6px; border-radius:10px; font-size:0.7rem; display:none;">0</span></div>
     
     <div class="menu-item btn-refresh" onclick="reloadData()">🔄 立即刷新</div>
 
@@ -153,12 +163,18 @@
         <div id="defaultRewards" class="reward-cloud"></div>
     </div>
 
+    <div id="mailbox" class="section">
+        <h1>📬 信箱管理</h1>
+        <p>來自使用者的意見回饋。</p>
+        <div id="mailList">載入中...</div>
+    </div>
+
 </div>
 
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getFirestore, collection, getDocs, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCArCzhRG6H-07Ooet34ikyP3w9xVq6t1U",
@@ -208,6 +224,7 @@
             document.getElementById('currentAdmin').innerText = userCred.user.email;
             msg.innerText = "讀取資料庫中...";
             await fetchAllData();
+            await fetchMessages();
             document.getElementById('loginOverlay').style.display = 'none';
         } catch (error) { msg.innerText = "登入失敗：" + error.message; }
     }
@@ -221,6 +238,7 @@
         }
         document.body.style.cursor = 'wait';
         await fetchAllData();
+        await fetchMessages();
         document.body.style.cursor = 'default';
         alert("資料已更新！");
     }
@@ -237,21 +255,14 @@
                 allUsersData.push(d);
             });
             
-            // 🔴 關鍵排序邏輯
+            // 排序邏輯
             allUsersData.sort((a, b) => {
-                // 判斷是否為遊客 (Email 開頭是 👻 或沒有 Email)
                 const isGuestA = !a.email || a.email.startsWith('👻');
                 const isGuestB = !b.email || b.email.startsWith('👻');
-
-                if (isGuestA !== isGuestB) {
-                    // 如果一個是遊客一個不是，有 Email 的排前面 (false < true)
-                    return isGuestA - isGuestB;
-                }
-                
-                // 如果身份相同 (都是遊客或都是正式)，則依時間新舊排序
+                if (isGuestA !== isGuestB) return isGuestA - isGuestB;
                 let dateA = new Date(a.lastLoginDate || 0);
                 let dateB = new Date(b.lastLoginDate || 0);
-                return dateB - dateA; // 新的在上面
+                return dateB - dateA; 
             });
 
             console.log("Data loaded & sorted:", allUsersData.length);
@@ -259,6 +270,80 @@
             renderUserTable();
             analyzeRewards();
         } catch (e) { alert("讀取資料庫失敗: " + e.message); }
+    }
+
+    async function fetchMessages() {
+        try {
+            // 使用 query 與 orderBy 讓新信件排前面 (Firebase 索引可能需要手動建立，若無則改用 client sort)
+            const q = query(collection(db, "messages"));
+            const snapshot = await getDocs(q);
+            let msgs = [];
+            snapshot.forEach(doc => msgs.push({ id: doc.id, ...doc.data() }));
+
+            // 排序：新到舊
+            msgs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+            
+            const mailList = document.getElementById('mailList');
+            if (msgs.length === 0) {
+                mailList.innerHTML = '<div style="text-align:center; padding:20px; color:#aaa;">目前沒有任何信件</div>';
+                updateUnreadBadge(0);
+                return;
+            }
+
+            let unreadCount = 0;
+            let html = msgs.map(m => {
+                if (!m.read) unreadCount++;
+                const timeStr = new Date(m.timestamp).toLocaleString();
+                const btnText = m.read ? '已讀' : '標示已讀';
+                const btnClass = m.read ? 'btn-read is-read' : 'btn-read';
+                
+                return `
+                <div class="mail-item ${m.read ? '' : 'unread'}">
+                    <div class="mail-header">
+                        <span>From: ${m.sender || 'Unknown'}</span>
+                        <span>${timeStr}</span>
+                    </div>
+                    <div class="mail-content">${m.content}</div>
+                    <div class="mail-actions">
+                        <button class="${btnClass}" onclick="toggleRead('${m.id}', ${m.read})">${btnText}</button>
+                        <button class="btn-del" onclick="deleteMessage('${m.id}')">刪除</button>
+                    </div>
+                </div>`;
+            }).join('');
+            
+            mailList.innerHTML = html;
+            updateUnreadBadge(unreadCount);
+
+        } catch (e) {
+            console.error(e);
+            document.getElementById('mailList').innerText = "讀取信箱失敗: " + e.message;
+        }
+    }
+
+    function updateUnreadBadge(count) {
+        const badge = document.getElementById('unreadBadge');
+        if (count > 0) {
+            badge.style.display = 'inline-block';
+            badge.innerText = count;
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    window.toggleRead = async function(id, currentStatus) {
+        try {
+            const ref = doc(db, "messages", id);
+            await updateDoc(ref, { read: !currentStatus });
+            await fetchMessages(); // 重新整理
+        } catch (e) { alert("更新失敗: " + e.message); }
+    }
+
+    window.deleteMessage = async function(id) {
+        if (!confirm("確定要刪除這封信嗎？")) return;
+        try {
+            await deleteDoc(doc(db, "messages", id));
+            await fetchMessages(); // 重新整理
+        } catch (e) { alert("刪除失敗: " + e.message); }
     }
 
     function renderDashboard() {
@@ -282,7 +367,7 @@
         document.getElementById('statTotalDeposit').innerText = totalDeposit.toLocaleString();
         document.getElementById('statGhostUsers').innerText = ghostCount;
 
-        // 儀表板的「最新活躍」依然照時間排，不分遊客
+        // 儀表板的「最新活躍」
         const recentList = [...allUsersData].sort((a,b) => {
             let dateA = new Date(a.lastLoginDate || 0);
             let dateB = new Date(b.lastLoginDate || 0);
@@ -404,6 +489,11 @@
         document.getElementById(id).classList.add('active');
         document.querySelectorAll('.menu-item').forEach(el => el.classList.remove('active'));
         event.target.classList.add('active');
+        
+        // 如果切換到信箱，重新抓取一次
+        if (id === 'mailbox') {
+            fetchMessages();
+        }
     }
 </script>
 </body>
