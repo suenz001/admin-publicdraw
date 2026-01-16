@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v3</title>
+    <title>超級幸運抽抽樂 - 管理後台 v4</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -34,20 +34,24 @@
         th { background: #f8f9fa; font-weight: bold; color: #2c3e50; }
         tr:hover { background: #f1f2f6; }
         
-        /* 欄位寬度設定 */
-        th:nth-child(1) { width: 15%; } /* ID */
-        th:nth-child(2) { width: 25%; } /* Email */
-        th:nth-child(3) { width: 25%; } /* 小孩資訊 */
-        th:nth-child(4) { width: 15%; } /* 上線時間 */
-        th:nth-child(5) { width: 10%; } /* 定存 */
-        th:nth-child(6) { width: 10%; } /* 操作 */
+        th:nth-child(1) { width: 15%; }
+        th:nth-child(2) { width: 25%; }
+        th:nth-child(3) { width: 25%; }
+        th:nth-child(4) { width: 15%; }
+        th:nth-child(5) { width: 10%; }
+        th:nth-child(6) { width: 10%; }
 
         .btn-del { background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
         .tag { background: #dfe6e9; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-right: 5px; display: inline-block; margin-bottom: 2px;}
 
+        /* 獎品標籤樣式 */
         .reward-cloud { display: flex; flex-wrap: wrap; gap: 10px; }
         .reward-tag { background: white; padding: 8px 15px; border-radius: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); font-size: 0.9rem; border: 1px solid #eee; }
         .reward-tag strong { color: var(--accent-color); margin-left: 5px; }
+        
+        /* 預設獎品標籤 (灰色) */
+        .default-tag { background: #f8f9fa; color: #7f8c8d; border: 1px dashed #ccc; }
+        .default-tag strong { color: #95a5a6; }
 
         #loginOverlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); z-index: 999; display: flex; justify-content: center; align-items: center; color: white; flex-direction: column; }
         .login-box { background: white; padding: 30px; border-radius: 10px; color: #333; width: 300px; text-align: center; }
@@ -133,10 +137,15 @@
     <div id="rewards" class="section">
         <h1>🎁 全球爸媽獎勵參考</h1>
         <p>統計所有家長設定的獎品內容。</p>
-        <h3>🔥 熱門獎勵 (出現次數)</h3>
+        
+        <h3 style="color:#d35400;">🔥 熱門「客製化」獎品 (排除預設)</h3>
         <div id="popularRewards" class="reward-cloud"></div>
-        <h3 style="margin-top:30px;">🌟 傳奇/神話級大獎</h3>
+
+        <h3 style="margin-top:30px; color:#f1c40f;">🌟 傳奇/神話級「客製化」大獎</h3>
         <div id="rareRewards" class="reward-cloud"></div>
+
+        <h3 style="margin-top:40px; color:#7f8c8d; border-top:1px solid #ddd; padding-top:20px;">📁 預設獎品使用率統計</h3>
+        <div id="defaultRewards" class="reward-cloud"></div>
     </div>
 
 </div>
@@ -146,6 +155,7 @@
     import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import { getFirestore, collection, getDocs, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
+    // === 您的 Firebase 設定 ===
     const firebaseConfig = {
       apiKey: "AIzaSyCArCzhRG6H-07Ooet34ikyP3w9xVq6t1U",
       authDomain: "kidrewardapp.firebaseapp.com",
@@ -161,6 +171,17 @@
     const db = getFirestore(app);
     
     let allUsersData = [];
+
+    // === 定義預設獎品 (用於過濾) ===
+    const DEFAULT_REWARDS_LIST = [
+        '小日記減少一行', '假日玩電動加5分鐘', '假日爸爸陪玩電動5分鐘', '減少看書時間5分鐘',
+        '小日記減少二行', '假日玩電動加10分鐘', '假日爸爸陪玩電動10分鐘', '減少看書時間10分鐘',
+        '小日記減少三行', '假日玩電動加15分鐘', '假日爸爸陪玩電動15分鐘', '減少看書時間15分鐘', '媽媽陪睡覺',
+        '小日記減少四行', '平日可玩電動10分鐘', '假日爸爸陪玩電動15分鐘', '增加點數200點',
+        '平日可玩電動15分鐘', '零用錢100元', '增加點數300點',
+        '平日可玩電動30分鐘', '可任意選購500元內的小禮物', '打手心處罰減免一次', '增加點數500點'
+    ];
+    const defaultRewardSet = new Set(DEFAULT_REWARDS_LIST);
 
     window.adminLogin = async function() {
         const e = document.getElementById('adminEmail').value;
@@ -187,14 +208,6 @@
                 d.uid = doc.id;
                 if(!d.children && d.score !== undefined) { d.children = [{name: "(舊版)", data: d}]; }
                 if(!d.children) d.children = [];
-                
-                // 處理日期格式
-                if(d.lastLoginDate) {
-                    // 如果是 ISO 字串 (v27+)，轉換為 Date 物件
-                    // 如果是舊版 "Fri Jan 16 2026" 字串，Date 也吃得下
-                    // 但為了保險，我們統一用 Date 物件處理
-                }
-                
                 allUsersData.push(d);
             });
             console.log("Data loaded:", allUsersData.length);
@@ -260,7 +273,6 @@
             let timeStr = u.lastLoginDate ? lastLogin.toLocaleString() : "未知";
             const isGhost = (new Date() - lastLogin) > (30 * 86400000);
             
-            // 🔴 這裡將 ID 和 Email 分開顯示
             html += `
             <tr>
                 <td><small style="color:#aaa; font-family:monospace;">${u.uid}</small></td>
@@ -274,23 +286,48 @@
         tbody.innerHTML = html;
     }
 
+    // === 🔴 重點修改：獎品分析邏輯 ===
     function analyzeRewards() {
-        let rewardCounts = {}, highTierRewards = [];
+        let customCounts = {};
+        let defaultCounts = {};
+        let highTierCustom = [];
+
         allUsersData.forEach(u => {
             let tiers = u.tiers || (u.children && u.children[0] ? u.children[0].data.tiers : null);
             if(tiers) {
                 tiers.forEach((t, index) => {
+                    if(!t.rewards) return;
                     t.rewards.forEach(r => {
-                        rewardCounts[r] = (rewardCounts[r] || 0) + 1;
-                        if(index >= 4) highTierRewards.push(r);
+                        // 判斷是否為預設獎品
+                        if (defaultRewardSet.has(r)) {
+                            defaultCounts[r] = (defaultCounts[r] || 0) + 1;
+                        } else {
+                            customCounts[r] = (customCounts[r] || 0) + 1;
+                            // 收集高級客製化獎品 (Index 4=傳奇, 5=神話)
+                            if(index >= 4) highTierCustom.push(r);
+                        }
                     });
                 });
             }
         });
-        const sortedRewards = Object.entries(rewardCounts).sort((a,b) => b[1] - a[1]).slice(0, 30);
-        document.getElementById('popularRewards').innerHTML = sortedRewards.map(item => `<span class="reward-tag">${item[0]} <strong>x${item[1]}</strong></span>`).join('');
-        const uniqueHigh = [...new Set(highTierRewards)];
-        document.getElementById('rareRewards').innerHTML = uniqueHigh.map(name => `<span class="reward-tag" style="border:1px solid #e17055; color:#d35400;">${name}</span>`).join('');
+
+        // 1. 渲染客製化熱門獎品
+        const sortedCustom = Object.entries(customCounts).sort((a,b) => b[1] - a[1]).slice(0, 50);
+        document.getElementById('popularRewards').innerHTML = sortedCustom.length > 0 ? sortedCustom.map(item => 
+            `<span class="reward-tag">${item[0]} <strong>x${item[1]}</strong></span>`
+        ).join('') : '<span style="color:#aaa; padding:10px;">尚未有客製化獎品數據</span>';
+
+        // 2. 渲染客製化高級獎品 (去重)
+        const uniqueHigh = [...new Set(highTierCustom)];
+        document.getElementById('rareRewards').innerHTML = uniqueHigh.length > 0 ? uniqueHigh.map(name => 
+            `<span class="reward-tag" style="border:2px solid #f1c40f; background:#fffcf5; color:#d35400;">${name}</span>`
+        ).join('') : '<span style="color:#aaa; padding:10px;">尚未有高級客製化獎品</span>';
+
+        // 3. 渲染預設獎品統計 (供參考)
+        const sortedDefault = Object.entries(defaultCounts).sort((a,b) => b[1] - a[1]);
+        document.getElementById('defaultRewards').innerHTML = sortedDefault.map(item => 
+            `<span class="reward-tag default-tag">${item[0]} <strong>x${item[1]}</strong></span>`
+        ).join('');
     }
 
     window.deleteUser = async function(uid) {
