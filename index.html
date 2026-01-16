@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v6</title>
+    <title>超級幸運抽抽樂 - 管理後台 v7 (排序優化)</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -18,7 +18,6 @@
         .menu-item { padding: 15px; cursor: pointer; border-radius: 8px; margin-bottom: 5px; transition: 0.3s; }
         .menu-item:hover, .menu-item.active { background: var(--accent-color); }
         
-        /* 刷新按鈕樣式 */
         .btn-refresh { background: #27ae60 !important; font-weight: bold; text-align: center; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
         .btn-refresh:active { transform: scale(0.98); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
 
@@ -39,13 +38,12 @@
         th { background: #f8f9fa; font-weight: bold; color: #2c3e50; }
         tr:hover { background: #f1f2f6; }
         
-        /* 欄位寬度設定 */
-        th:nth-child(1) { width: 15%; } /* ID */
-        th:nth-child(2) { width: 25%; } /* Email */
-        th:nth-child(3) { width: 25%; } /* 小孩資訊 */
-        th:nth-child(4) { width: 15%; } /* 上線時間 */
-        th:nth-child(5) { width: 10%; } /* 定存 */
-        th:nth-child(6) { width: 10%; } /* 操作 */
+        th:nth-child(1) { width: 15%; }
+        th:nth-child(2) { width: 25%; }
+        th:nth-child(3) { width: 25%; }
+        th:nth-child(4) { width: 15%; }
+        th:nth-child(5) { width: 10%; }
+        th:nth-child(6) { width: 10%; }
 
         .btn-del { background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
         .tag { background: #dfe6e9; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-right: 5px; display: inline-block; margin-bottom: 2px;}
@@ -178,24 +176,21 @@
     
     let allUsersData = [];
 
-    // === 預設獎品清單 ===
     const DEFAULT_REWARDS_LIST = [
         '小日記減少一行', '假日玩電動加5分鐘', '假日爸爸陪玩電動5分鐘', '減少看書時間5分鐘',
         '小日記減少二行', '假日玩電動加10分鐘', '假日爸爸陪玩電動10分鐘', '減少看書時間10分鐘',
         '小日記減少三行', '假日玩電動加15分鐘', '假日爸爸陪玩電動15分鐘', '減少看書時間15分鐘', '媽媽陪睡覺',
-        '小日記減少四行', '平日可玩電動10分鐘', '假日爸爸陪玩電動30分鐘', '增加點數200點',
+        '小日記減少四行', '平日可玩電動10分鐘', '假日爸爸陪玩電動15分鐘', '增加點數200點',
         '平日可玩電動15分鐘', '零用錢100元', '增加點數300點',
         '平日可玩電動30分鐘', '可任意選購500元內的小禮物', '打手心處罰減免一次', '增加點數500點'
     ];
     const defaultRewardSet = new Set(DEFAULT_REWARDS_LIST);
 
-    // === 管理員登入檢查 (含 Email 鎖定) ===
     window.adminLogin = async function() {
         const e = document.getElementById('adminEmail').value;
         const p = document.getElementById('adminPass').value;
         const msg = document.getElementById('loginMsg');
         
-        // 🔐 指定的唯一管理員帳號
         const ALLOWED_ADMIN_EMAIL = "suenz001@yahoo.com.tw";
 
         if(!e || !p) { msg.innerText = "請輸入帳號密碼"; return; }
@@ -204,9 +199,8 @@
             msg.innerText = "驗證身分中...";
             const userCred = await signInWithEmailAndPassword(auth, e, p);
             
-            // 🚫 檢查 Email 是否符合
             if(userCred.user.email !== ALLOWED_ADMIN_EMAIL) {
-                await signOut(auth); // 強制登出
+                await signOut(auth);
                 msg.innerText = "⛔ 權限不足：您不是指定的管理員！";
                 return;
             }
@@ -220,13 +214,12 @@
 
     window.logout = function() { signOut(auth).then(() => location.reload()); }
 
-    // === 🔄 新增：刷新資料功能 ===
     window.reloadData = async function() {
         if(!document.getElementById('currentAdmin').innerText || document.getElementById('currentAdmin').innerText === '...') {
             alert("請先登入");
             return;
         }
-        document.body.style.cursor = 'wait'; // 變更游標為等待
+        document.body.style.cursor = 'wait';
         await fetchAllData();
         document.body.style.cursor = 'default';
         alert("資料已更新！");
@@ -243,7 +236,25 @@
                 if(!d.children) d.children = [];
                 allUsersData.push(d);
             });
-            console.log("Data loaded:", allUsersData.length);
+            
+            // 🔴 關鍵排序邏輯
+            allUsersData.sort((a, b) => {
+                // 判斷是否為遊客 (Email 開頭是 👻 或沒有 Email)
+                const isGuestA = !a.email || a.email.startsWith('👻');
+                const isGuestB = !b.email || b.email.startsWith('👻');
+
+                if (isGuestA !== isGuestB) {
+                    // 如果一個是遊客一個不是，有 Email 的排前面 (false < true)
+                    return isGuestA - isGuestB;
+                }
+                
+                // 如果身份相同 (都是遊客或都是正式)，則依時間新舊排序
+                let dateA = new Date(a.lastLoginDate || 0);
+                let dateB = new Date(b.lastLoginDate || 0);
+                return dateB - dateA; // 新的在上面
+            });
+
+            console.log("Data loaded & sorted:", allUsersData.length);
             renderDashboard();
             renderUserTable();
             analyzeRewards();
@@ -271,6 +282,7 @@
         document.getElementById('statTotalDeposit').innerText = totalDeposit.toLocaleString();
         document.getElementById('statGhostUsers').innerText = ghostCount;
 
+        // 儀表板的「最新活躍」依然照時間排，不分遊客
         const recentList = [...allUsersData].sort((a,b) => {
             let dateA = new Date(a.lastLoginDate || 0);
             let dateB = new Date(b.lastLoginDate || 0);
