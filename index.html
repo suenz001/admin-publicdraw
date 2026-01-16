@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v2</title>
+    <title>超級幸運抽抽樂 - 管理後台 v3</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -185,8 +185,16 @@
             querySnapshot.forEach((doc) => {
                 let d = doc.data();
                 d.uid = doc.id;
-                if(!d.children && d.score !== undefined) { d.children = [{name: "(舊版)", data: d}]; d.lastLoginDate = d.lastLoginDate || "未知"; }
+                if(!d.children && d.score !== undefined) { d.children = [{name: "(舊版)", data: d}]; }
                 if(!d.children) d.children = [];
+                
+                // 處理日期格式
+                if(d.lastLoginDate) {
+                    // 如果是 ISO 字串 (v27+)，轉換為 Date 物件
+                    // 如果是舊版 "Fri Jan 16 2026" 字串，Date 也吃得下
+                    // 但為了保險，我們統一用 Date 物件處理
+                }
+                
                 allUsersData.push(d);
             });
             console.log("Data loaded:", allUsersData.length);
@@ -201,7 +209,7 @@
         let activeCount = 0, ghostCount = 0, totalDeposit = 0;
         allUsersData.forEach(u => {
             let lastLogin = new Date(u.lastLoginDate);
-            if(isNaN(lastLogin.getTime())) lastLogin = new Date(0);
+            if(!u.lastLoginDate || isNaN(lastLogin.getTime())) lastLogin = new Date(0);
             const diffDays = (now - lastLogin) / (1000 * 60 * 60 * 24);
             if(diffDays <= 7) activeCount++;
             if(diffDays > 30) ghostCount++;
@@ -217,15 +225,22 @@
         document.getElementById('statTotalDeposit').innerText = totalDeposit.toLocaleString();
         document.getElementById('statGhostUsers').innerText = ghostCount;
 
-        const recentList = [...allUsersData].sort((a,b) => new Date(b.lastLoginDate) - new Date(a.lastLoginDate)).slice(0, 10);
-        document.querySelector('#recentTable tbody').innerHTML = recentList.map(u => `
+        const recentList = [...allUsersData].sort((a,b) => {
+            let dateA = new Date(a.lastLoginDate || 0);
+            let dateB = new Date(b.lastLoginDate || 0);
+            return dateB - dateA;
+        }).slice(0, 10);
+
+        document.querySelector('#recentTable tbody').innerHTML = recentList.map(u => {
+            let timeStr = u.lastLoginDate ? new Date(u.lastLoginDate).toLocaleString() : "未知";
+            return `
             <tr>
                 <td>${u.uid.substring(0,5)}...</td>
                 <td>${u.email || '<span style="color:#aaa">(尚未記錄)</span>'}</td>
-                <td>${u.lastLoginDate || '未知'}</td>
+                <td>${timeStr}</td>
                 <td>${u.children.length} 子</td>
-            </tr>
-        `).join('');
+            </tr>`;
+        }).join('');
     }
 
     function renderUserTable() {
@@ -240,7 +255,10 @@
                     if(c.data.deposits) depositCount += c.data.deposits.length;
                 });
             }
-            const isGhost = (new Date() - new Date(u.lastLoginDate)) > (30 * 86400000);
+            
+            let lastLogin = new Date(u.lastLoginDate || 0);
+            let timeStr = u.lastLoginDate ? lastLogin.toLocaleString() : "未知";
+            const isGhost = (new Date() - lastLogin) > (30 * 86400000);
             
             // 🔴 這裡將 ID 和 Email 分開顯示
             html += `
@@ -248,7 +266,7 @@
                 <td><small style="color:#aaa; font-family:monospace;">${u.uid}</small></td>
                 <td><strong>${u.email ? u.email : '<span style="color:#f39c12">未回寫</span>'}</strong></td>
                 <td>${childrenInfo}</td>
-                <td style="color:${isGhost?'red':'green'}">${u.lastLoginDate || '未知'}</td>
+                <td style="color:${isGhost?'red':'green'}">${timeStr}</td>
                 <td>${depositCount}</td>
                 <td><button class="btn-del" onclick="deleteUser('${u.uid}')">刪除</button></td>
             </tr>`;
@@ -290,8 +308,7 @@
         if(!confirm('⚠️ 刪除所有 >180 天未登入的資料紀錄？')) return;
         const now = new Date(); let count = 0;
         for (let u of allUsersData) {
-            let last = new Date(u.lastLoginDate);
-            if(isNaN(last.getTime())) continue;
+            let last = new Date(u.lastLoginDate || 0);
             if((now - last) / 86400000 > 180) {
                 try { await deleteDoc(doc(db, "users", u.uid)); count++; } catch(e) {}
             }
