@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v5 (鎖定版)</title>
+    <title>超級幸運抽抽樂 - 管理後台 v6</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -17,6 +17,11 @@
         .sidebar h2 { margin-top: 0; font-size: 1.2rem; border-bottom: 1px solid #34495e; padding-bottom: 15px; }
         .menu-item { padding: 15px; cursor: pointer; border-radius: 8px; margin-bottom: 5px; transition: 0.3s; }
         .menu-item:hover, .menu-item.active { background: var(--accent-color); }
+        
+        /* 刷新按鈕樣式 */
+        .btn-refresh { background: #27ae60 !important; font-weight: bold; text-align: center; margin-top: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.2); }
+        .btn-refresh:active { transform: scale(0.98); box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+
         .admin-info { margin-top: auto; font-size: 0.8rem; color: #bdc3c7; }
 
         .main-content { flex: 1; padding: 30px; overflow-y: auto; }
@@ -76,6 +81,9 @@
     <div class="menu-item active" onclick="switchPage('dashboard')">📊 總覽儀表板</div>
     <div class="menu-item" onclick="switchPage('users')">👥 使用者管理</div>
     <div class="menu-item" onclick="switchPage('rewards')">🎁 獎品大數據</div>
+    
+    <div class="menu-item btn-refresh" onclick="reloadData()">🔄 立即刷新</div>
+
     <div class="admin-info">
         目前登入：<span id="currentAdmin">...</span><br>
         <a href="#" onclick="logout()" style="color:#e74c3c;">[登出]</a>
@@ -170,18 +178,18 @@
     
     let allUsersData = [];
 
-    // === 預設獎品清單 (用於過濾) ===
+    // === 預設獎品清單 ===
     const DEFAULT_REWARDS_LIST = [
         '小日記減少一行', '假日玩電動加5分鐘', '假日爸爸陪玩電動5分鐘', '減少看書時間5分鐘',
         '小日記減少二行', '假日玩電動加10分鐘', '假日爸爸陪玩電動10分鐘', '減少看書時間10分鐘',
         '小日記減少三行', '假日玩電動加15分鐘', '假日爸爸陪玩電動15分鐘', '減少看書時間15分鐘', '媽媽陪睡覺',
-        '小日記減少四行', '平日可玩電動10分鐘', '假日爸爸陪玩電動30分鐘', '增加點數200點',
+        '小日記減少四行', '平日可玩電動10分鐘', '假日爸爸陪玩電動15分鐘', '增加點數200點',
         '平日可玩電動15分鐘', '零用錢100元', '增加點數300點',
         '平日可玩電動30分鐘', '可任意選購500元內的小禮物', '打手心處罰減免一次', '增加點數500點'
     ];
     const defaultRewardSet = new Set(DEFAULT_REWARDS_LIST);
 
-    // === 🔴 管理員登入檢查 (含 Email 鎖定) ===
+    // === 管理員登入檢查 (含 Email 鎖定) ===
     window.adminLogin = async function() {
         const e = document.getElementById('adminEmail').value;
         const p = document.getElementById('adminPass').value;
@@ -211,6 +219,18 @@
     }
 
     window.logout = function() { signOut(auth).then(() => location.reload()); }
+
+    // === 🔄 新增：刷新資料功能 ===
+    window.reloadData = async function() {
+        if(!document.getElementById('currentAdmin').innerText || document.getElementById('currentAdmin').innerText === '...') {
+            alert("請先登入");
+            return;
+        }
+        document.body.style.cursor = 'wait'; // 變更游標為等待
+        await fetchAllData();
+        document.body.style.cursor = 'default';
+        alert("資料已更新！");
+    }
 
     async function fetchAllData() {
         try {
