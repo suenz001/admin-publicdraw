@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>超級幸運抽抽樂 - 管理後台 v4</title>
+    <title>超級幸運抽抽樂 - 管理後台 v5 (鎖定版)</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -34,22 +34,21 @@
         th { background: #f8f9fa; font-weight: bold; color: #2c3e50; }
         tr:hover { background: #f1f2f6; }
         
-        th:nth-child(1) { width: 15%; }
-        th:nth-child(2) { width: 25%; }
-        th:nth-child(3) { width: 25%; }
-        th:nth-child(4) { width: 15%; }
-        th:nth-child(5) { width: 10%; }
-        th:nth-child(6) { width: 10%; }
+        /* 欄位寬度設定 */
+        th:nth-child(1) { width: 15%; } /* ID */
+        th:nth-child(2) { width: 25%; } /* Email */
+        th:nth-child(3) { width: 25%; } /* 小孩資訊 */
+        th:nth-child(4) { width: 15%; } /* 上線時間 */
+        th:nth-child(5) { width: 10%; } /* 定存 */
+        th:nth-child(6) { width: 10%; } /* 操作 */
 
         .btn-del { background: #e74c3c; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
         .tag { background: #dfe6e9; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; margin-right: 5px; display: inline-block; margin-bottom: 2px;}
 
-        /* 獎品標籤樣式 */
         .reward-cloud { display: flex; flex-wrap: wrap; gap: 10px; }
         .reward-tag { background: white; padding: 8px 15px; border-radius: 20px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); font-size: 0.9rem; border: 1px solid #eee; }
         .reward-tag strong { color: var(--accent-color); margin-left: 5px; }
         
-        /* 預設獎品標籤 (灰色) */
         .default-tag { background: #f8f9fa; color: #7f8c8d; border: 1px dashed #ccc; }
         .default-tag strong { color: #95a5a6; }
 
@@ -155,7 +154,6 @@
     import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
     import { getFirestore, collection, getDocs, doc, deleteDoc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
-    // === 您的 Firebase 設定 ===
     const firebaseConfig = {
       apiKey: "AIzaSyCArCzhRG6H-07Ooet34ikyP3w9xVq6t1U",
       authDomain: "kidrewardapp.firebaseapp.com",
@@ -172,7 +170,7 @@
     
     let allUsersData = [];
 
-    // === 定義預設獎品 (用於過濾) ===
+    // === 預設獎品清單 (用於過濾) ===
     const DEFAULT_REWARDS_LIST = [
         '小日記減少一行', '假日玩電動加5分鐘', '假日爸爸陪玩電動5分鐘', '減少看書時間5分鐘',
         '小日記減少二行', '假日玩電動加10分鐘', '假日爸爸陪玩電動10分鐘', '減少看書時間10分鐘',
@@ -183,15 +181,30 @@
     ];
     const defaultRewardSet = new Set(DEFAULT_REWARDS_LIST);
 
+    // === 🔴 管理員登入檢查 (含 Email 鎖定) ===
     window.adminLogin = async function() {
         const e = document.getElementById('adminEmail').value;
         const p = document.getElementById('adminPass').value;
         const msg = document.getElementById('loginMsg');
+        
+        // 🔐 指定的唯一管理員帳號
+        const ALLOWED_ADMIN_EMAIL = "suenz001@yahoo.com.tw";
+
         if(!e || !p) { msg.innerText = "請輸入帳號密碼"; return; }
+        
         try {
-            msg.innerText = "讀取資料庫中...";
+            msg.innerText = "驗證身分中...";
             const userCred = await signInWithEmailAndPassword(auth, e, p);
+            
+            // 🚫 檢查 Email 是否符合
+            if(userCred.user.email !== ALLOWED_ADMIN_EMAIL) {
+                await signOut(auth); // 強制登出
+                msg.innerText = "⛔ 權限不足：您不是指定的管理員！";
+                return;
+            }
+
             document.getElementById('currentAdmin').innerText = userCred.user.email;
+            msg.innerText = "讀取資料庫中...";
             await fetchAllData();
             document.getElementById('loginOverlay').style.display = 'none';
         } catch (error) { msg.innerText = "登入失敗：" + error.message; }
@@ -286,7 +299,6 @@
         tbody.innerHTML = html;
     }
 
-    // === 🔴 重點修改：獎品分析邏輯 ===
     function analyzeRewards() {
         let customCounts = {};
         let defaultCounts = {};
@@ -298,12 +310,10 @@
                 tiers.forEach((t, index) => {
                     if(!t.rewards) return;
                     t.rewards.forEach(r => {
-                        // 判斷是否為預設獎品
                         if (defaultRewardSet.has(r)) {
                             defaultCounts[r] = (defaultCounts[r] || 0) + 1;
                         } else {
                             customCounts[r] = (customCounts[r] || 0) + 1;
-                            // 收集高級客製化獎品 (Index 4=傳奇, 5=神話)
                             if(index >= 4) highTierCustom.push(r);
                         }
                     });
@@ -311,19 +321,16 @@
             }
         });
 
-        // 1. 渲染客製化熱門獎品
         const sortedCustom = Object.entries(customCounts).sort((a,b) => b[1] - a[1]).slice(0, 50);
         document.getElementById('popularRewards').innerHTML = sortedCustom.length > 0 ? sortedCustom.map(item => 
             `<span class="reward-tag">${item[0]} <strong>x${item[1]}</strong></span>`
         ).join('') : '<span style="color:#aaa; padding:10px;">尚未有客製化獎品數據</span>';
 
-        // 2. 渲染客製化高級獎品 (去重)
         const uniqueHigh = [...new Set(highTierCustom)];
         document.getElementById('rareRewards').innerHTML = uniqueHigh.length > 0 ? uniqueHigh.map(name => 
             `<span class="reward-tag" style="border:2px solid #f1c40f; background:#fffcf5; color:#d35400;">${name}</span>`
         ).join('') : '<span style="color:#aaa; padding:10px;">尚未有高級客製化獎品</span>';
 
-        // 3. 渲染預設獎品統計 (供參考)
         const sortedDefault = Object.entries(defaultCounts).sort((a,b) => b[1] - a[1]);
         document.getElementById('defaultRewards').innerHTML = sortedDefault.map(item => 
             `<span class="reward-tag default-tag">${item[0]} <strong>x${item[1]}</strong></span>`
