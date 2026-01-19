@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>超級幸運抽抽樂 - 管理後台 v9 (手機版優化)</title>
+    <title>超級幸運抽抽樂 - 管理後台 v10 (排序優化版)</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -54,7 +54,13 @@
         .table-responsive { width: 100%; overflow-x: auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); -webkit-overflow-scrolling: touch; }
         table { width: 100%; border-collapse: collapse; min-width: 600px; /* 強制最小寬度，觸發捲動 */ }
         th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #f8f9fa; font-weight: bold; color: #2c3e50; position: sticky; top: 0; }
+        
+        /* 排序標題樣式 */
+        th { background: #f8f9fa; font-weight: bold; color: #2c3e50; position: sticky; top: 0; user-select: none; }
+        th.sortable { cursor: pointer; transition: background 0.2s; }
+        th.sortable:hover { background: #e9ecef; }
+        th span.sort-icon { margin-left: 5px; font-size: 0.8rem; color: #999; }
+
         tr:hover { background: #f1f2f6; }
 
         .btn-del { background: #e74c3c; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.9rem; }
@@ -194,15 +200,16 @@
             <input type="text" id="searchInput" placeholder="搜尋 Email..." style="padding:10px; flex:1; border:1px solid #ccc; border-radius:5px;" onkeyup="filterUsers()">
             <button onclick="deleteGhosts()" style="background:#c0392b; color:white; border:none; padding:10px 15px; border-radius:5px; cursor:pointer; white-space:nowrap;">🧹 清理</button>
         </div>
+        <p style="font-size:0.8rem; color:#666;">💡 點擊標題可以排序</p>
         <div class="table-responsive">
             <table id="userTable">
                 <thead>
                     <tr>
-                        <th>User ID</th>
-                        <th>Email</th>
+                        <th class="sortable" onclick="sortTable('uid')">User ID <span id="sort-uid" class="sort-icon"></span></th>
+                        <th class="sortable" onclick="sortTable('email')">Email <span id="sort-email" class="sort-icon"></span></th>
                         <th>小孩資料 (點數)</th>
-                        <th>最後上線</th>
-                        <th>定存</th>
+                        <th class="sortable" onclick="sortTable('lastLogin')">最後上線 <span id="sort-lastLogin" class="sort-icon">▼</span></th>
+                        <th class="sortable" onclick="sortTable('deposit')">定存(筆數) <span id="sort-deposit" class="sort-icon"></span></th>
                         <th>操作</th>
                     </tr>
                 </thead>
@@ -253,6 +260,7 @@
     const db = getFirestore(app);
     
     let allUsersData = [];
+    let currentSort = { key: 'lastLogin', dir: 'desc' }; // 預設排序
 
     const DEFAULT_REWARDS_LIST = [
         '小日記減少一行', '假日玩電動加5分鐘', '假日爸爸陪玩電動5分鐘', '減少看書時間5分鐘',
@@ -340,20 +348,64 @@
                 allUsersData.push(d);
             });
             
-            allUsersData.sort((a, b) => {
-                const isGuestA = !a.email || a.email.startsWith('👻');
-                const isGuestB = !b.email || b.email.startsWith('👻');
-                if (isGuestA !== isGuestB) return isGuestA - isGuestB;
-                let dateA = new Date(a.lastLoginDate || 0);
-                let dateB = new Date(b.lastLoginDate || 0);
-                return dateB - dateA; 
-            });
+            // 初始排序 (依照 currentSort 預設值)
+            sortDataArray();
+            updateSortIcons();
 
             renderDashboard();
             renderUserTable();
             analyzeRewards();
         } catch (e) { alert("讀取資料庫失敗: " + e.message); }
     }
+
+    // === 排序核心邏輯 ===
+    window.sortTable = function(key) {
+        if (currentSort.key === key) {
+            currentSort.dir = currentSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+            currentSort.key = key;
+            currentSort.dir = 'asc';
+        }
+        sortDataArray();
+        updateSortIcons();
+        renderUserTable();
+    }
+
+    function sortDataArray() {
+        const { key, dir } = currentSort;
+        allUsersData.sort((a, b) => {
+            let valA, valB;
+
+            if (key === 'email') {
+                valA = a.email || 'zzzz'; // 讓無 email 排到後面
+                valB = b.email || 'zzzz';
+                return dir === 'asc' ? valA.localeCompare(valB) : valB.localeCompare(valA);
+            } else if (key === 'uid') {
+                return dir === 'asc' ? a.uid.localeCompare(b.uid) : b.uid.localeCompare(a.uid);
+            } else if (key === 'lastLogin') {
+                valA = new Date(a.lastLoginDate || 0).getTime();
+                valB = new Date(b.lastLoginDate || 0).getTime();
+                return dir === 'asc' ? valA - valB : valB - valA;
+            } else if (key === 'deposit') {
+                valA = (a.children || []).reduce((acc, c) => acc + (c.data.deposits ? c.data.deposits.length : 0), 0);
+                valB = (b.children || []).reduce((acc, c) => acc + (c.data.deposits ? c.data.deposits.length : 0), 0);
+                return dir === 'asc' ? valA - valB : valB - valA;
+            }
+            return 0;
+        });
+    }
+
+    function updateSortIcons() {
+        // 清除所有 icon
+        document.querySelectorAll('.sort-icon').forEach(el => el.innerText = '');
+        // 設定當前 icon
+        const icon = document.getElementById(`sort-${currentSort.key}`);
+        if(icon) {
+            icon.innerText = currentSort.dir === 'asc' ? '▲' : '▼';
+            icon.style.color = currentSort.dir === 'asc' ? '#e74c3c' : '#2980b9';
+        }
+    }
+    // ==================
 
     async function fetchMessages() {
         try {
