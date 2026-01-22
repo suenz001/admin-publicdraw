@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>超級幸運抽抽樂 - 管理後台 v10 (排序優化版)</title>
+    <title>超級幸運抽抽樂 - 管理後台 v11 (內容審查版)</title>
     <style>
         :root {
             --sidebar-width: 250px;
@@ -151,6 +151,7 @@
         <div class="menu-item active" onclick="switchPage('dashboard')">📊 總覽儀表板</div>
         <div class="menu-item" onclick="switchPage('users')">👥 使用者管理</div>
         <div class="menu-item" onclick="switchPage('rewards')">🎁 獎品大數據</div>
+        <div class="menu-item" onclick="switchPage('moderation')">🛡️ 內容審查</div>
         <div class="menu-item" onclick="switchPage('mailbox')">📬 信箱管理 <span id="unreadBadge" style="background:#e74c3c; padding:2px 8px; border-radius:10px; font-size:0.8rem; display:none;">0</span></div>
         
         <div class="menu-item btn-refresh" onclick="reloadData()">🔄 立即刷新</div>
@@ -232,6 +233,45 @@
         <div id="defaultRewards" class="reward-cloud"></div>
     </div>
 
+    <div id="moderation" class="section">
+        <h1>🛡️ 內容審查與管理</h1>
+        <p>在此強制下架不當留言或拍賣商品。</p>
+
+        <h2 style="margin-top:30px; color:#2980b9;">💬 留言板 (最新 50 筆)</h2>
+        <div class="table-responsive">
+            <table id="postTable">
+                <thead>
+                    <tr>
+                        <th width="15%">發文者</th>
+                        <th width="50%">內容</th>
+                        <th width="15%">時間</th>
+                        <th width="10%">徽章</th>
+                        <th width="10%">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="postListBody"></tbody>
+            </table>
+        </div>
+
+        <h2 style="margin-top:40px; color:#d35400;">🏙️ 市集拍賣 (最新 50 筆)</h2>
+        <div class="table-responsive">
+            <table id="marketTable">
+                <thead>
+                    <tr>
+                        <th width="15%">賣家</th>
+                        <th width="30%">商品名稱</th>
+                        <th width="10%">價格</th>
+                        <th width="10%">等級</th>
+                        <th width="10%">狀態</th>
+                        <th width="15%">上架時間</th>
+                        <th width="10%">操作</th>
+                    </tr>
+                </thead>
+                <tbody id="marketListBody"></tbody>
+            </table>
+        </div>
+    </div>
+
     <div id="mailbox" class="section">
         <h1>📬 信箱管理</h1>
         <p>來自使用者的意見回饋。</p>
@@ -243,7 +283,7 @@
 <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getAuth, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getFirestore, collection, getDocs, doc, deleteDoc, updateDoc, query, orderBy } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getFirestore, collection, getDocs, doc, deleteDoc, updateDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCArCzhRG6H-07Ooet34ikyP3w9xVq6t1U",
@@ -287,8 +327,9 @@
         const clickedBtn = [...document.querySelectorAll('.menu-item')].find(el => el.getAttribute('onclick') && el.getAttribute('onclick').includes(id));
         if(clickedBtn) clickedBtn.classList.add('active');
         
-        // 重新抓取信箱
+        // 載入對應資料
         if (id === 'mailbox') fetchMessages();
+        if (id === 'moderation') fetchModerationData(); // 新增：讀取審查資料
         
         // 關閉手機選單
         document.getElementById('sidebar').classList.remove('open');
@@ -331,6 +372,10 @@
         document.body.style.cursor = 'wait';
         await fetchAllData();
         await fetchMessages();
+        // 如果當前在審查頁面，也刷新它
+        if(document.getElementById('moderation').classList.contains('active')) {
+            await fetchModerationData();
+        }
         document.body.style.cursor = 'default';
         alert("資料已更新！");
         document.getElementById('sidebar').classList.remove('open');
@@ -348,7 +393,7 @@
                 allUsersData.push(d);
             });
             
-            // 初始排序 (依照 currentSort 預設值)
+            // 初始排序
             sortDataArray();
             updateSortIcons();
 
@@ -357,6 +402,95 @@
             analyzeRewards();
         } catch (e) { alert("讀取資料庫失敗: " + e.message); }
     }
+
+    // === 新增：內容審查資料讀取 ===
+    async function fetchModerationData() {
+        const postBody = document.getElementById('postListBody');
+        const marketBody = document.getElementById('marketListBody');
+        postBody.innerHTML = '<tr><td colspan="5" style="text-align:center;">載入中...</td></tr>';
+        marketBody.innerHTML = '<tr><td colspan="7" style="text-align:center;">載入中...</td></tr>';
+
+        try {
+            // 1. 讀取留言 (Posts) - 取最新 50 筆
+            const postQ = query(collection(db, "posts"), orderBy("timestamp", "desc"), limit(50));
+            const postSnap = await getDocs(postQ);
+            
+            if (postSnap.empty) {
+                postBody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999;">目前沒有留言</td></tr>';
+            } else {
+                let html = '';
+                postSnap.forEach(doc => {
+                    const p = doc.data();
+                    const dateStr = new Date(p.timestamp).toLocaleString();
+                    const badge = p.badgeIcon ? (Array.isArray(p.badgeIcon) ? p.badgeIcon.join(' ') : p.badgeIcon) : '';
+                    html += `
+                        <tr>
+                            <td>${p.authorName}<br><small style="color:#aaa">${p.authorUid.slice(0,5)}</small></td>
+                            <td>${p.content}</td>
+                            <td style="font-size:0.85rem;">${dateStr}</td>
+                            <td>${badge}</td>
+                            <td><button class="btn-del" onclick="deletePost('${doc.id}')">刪除</button></td>
+                        </tr>
+                    `;
+                });
+                postBody.innerHTML = html;
+            }
+
+            // 2. 讀取市集 (Market Items) - 取最新 50 筆
+            const marketQ = query(collection(db, "market_items"), orderBy("timestamp", "desc"), limit(50));
+            const marketSnap = await getDocs(marketQ);
+
+            if (marketSnap.empty) {
+                marketBody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:#999;">目前沒有商品</td></tr>';
+            } else {
+                let html = '';
+                marketSnap.forEach(doc => {
+                    const m = doc.data();
+                    const dateStr = new Date(m.timestamp).toLocaleString();
+                    let statusColor = 'green';
+                    let statusText = '販售中';
+                    
+                    if(m.status === 'sold') { statusColor = '#95a5a6'; statusText = '已售出'; }
+                    if(m.status === 'cancelled') { statusColor = '#e74c3c'; statusText = '已下架'; }
+
+                    html += `
+                        <tr style="opacity: ${m.status==='active' ? 1 : 0.6}">
+                            <td>${m.sellerName}<br><small style="color:#aaa">${m.sellerUid.slice(0,5)}</small></td>
+                            <td>${m.itemData ? m.itemData.reward : '未知商品'}</td>
+                            <td style="color:#d35400; font-weight:bold;">${m.price}</td>
+                            <td><span class="tag" style="background:${m.itemData ? m.itemData.color : '#ccc'}; color:white;">${m.itemData ? m.itemData.tierName : '?'}</span></td>
+                            <td style="color:${statusColor}; font-weight:bold;">${statusText}</td>
+                            <td style="font-size:0.85rem;">${dateStr}</td>
+                            <td><button class="btn-del" onclick="deleteMarketItem('${doc.id}')">下架</button></td>
+                        </tr>
+                    `;
+                });
+                marketBody.innerHTML = html;
+            }
+
+        } catch (e) {
+            console.error(e);
+            postBody.innerHTML = `<tr><td colspan="5" style="color:red">讀取錯誤: ${e.message}</td></tr>`;
+        }
+    }
+
+    // === 新增：刪除功能 ===
+    window.deletePost = async function(id) {
+        if(!confirm("確定要刪除這則留言嗎？(此動作無法復原)")) return;
+        try {
+            await deleteDoc(doc(db, "posts", id));
+            fetchModerationData(); // 刷新表格
+        } catch(e) { alert("刪除失敗: " + e.message); }
+    }
+
+    window.deleteMarketItem = async function(id) {
+        if(!confirm("確定要強制刪除此商品？\n(注意：若是『已售出』的歷史紀錄被刪除，可能會影響用戶查詢紀錄)")) return;
+        try {
+            await deleteDoc(doc(db, "market_items", id));
+            fetchModerationData(); // 刷新表格
+        } catch(e) { alert("刪除失敗: " + e.message); }
+    }
+    // ==================
 
     // === 排序核心邏輯 ===
     window.sortTable = function(key) {
@@ -396,9 +530,7 @@
     }
 
     function updateSortIcons() {
-        // 清除所有 icon
         document.querySelectorAll('.sort-icon').forEach(el => el.innerText = '');
-        // 設定當前 icon
         const icon = document.getElementById(`sort-${currentSort.key}`);
         if(icon) {
             icon.innerText = currentSort.dir === 'asc' ? '▲' : '▼';
